@@ -1,11 +1,8 @@
 package com.hmdp.service.impl;
 
-import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.StrUtil;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.config.AiProperties;
 import com.hmdp.dto.Result;
-import com.hmdp.entity.Blog;
 import com.hmdp.service.IAiSearchService;
 import com.hmdp.service.IBlogService;
 import lombok.RequiredArgsConstructor;
@@ -19,141 +16,61 @@ import org.springframework.web.client.RestTemplate;
 import javax.annotation.Resource;
 import java.net.URI;
 import java.util.*;
-import java.util.stream.Collectors;
-import java.util.concurrent.TimeUnit;
+ 
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class AiSearchServiceImpl implements IAiSearchService {
 
+    // 保留依赖以便后续扩展（当前未使用）
+    @SuppressWarnings("unused")
     private final IBlogService blogService;
     private final StringRedisTemplate stringRedisTemplate;
     private final AiProperties aiProperties;
+    private final com.hmdp.service.IVectorRagService vectorRagService;
 
     @Resource
     private RestTemplate restTemplate;
 
+    // 删除方案一（like/BM25）逻辑，改为仅保留方案二
+
     @Override
-    public Result searchAndSummarize(String query) {
+    public Result vectorSearchAndSummarize(String query) {
         if (StrUtil.isBlank(query)) {
             return Result.fail("关键词不能为空");
         }
-
-        String cacheKey = "ai:search:" + query.trim();
+        String cacheKey = "ai:vsearch:" + query.trim();
         String cached = stringRedisTemplate.opsForValue().get(cacheKey);
         if (StrUtil.isNotBlank(cached)) {
             return Result.ok(cached);
         }
 
-        // 1) 基于 title/content 的模糊查询，限制 topK
         int topK = Optional.ofNullable(aiProperties.getTopK()).orElse(10);
-        List<Blog> candidates = blogService.list(new QueryWrapper<Blog>()
-                .select("id", "title", "content")
-                .and(w -> w.like("title", query).or().like("content", query))
-                .last("limit " + topK));
-
-        // 1.1 若无结果，使用大模型进行关键词扩展后再检索（简单、有效提升召回）
-        if (CollUtil.isEmpty(candidates)) {
-            List<String> expanded = expandKeywordsWithLLM(query);
-            if (CollUtil.isNotEmpty(expanded)) {
-                QueryWrapper<Blog> qw = new QueryWrapper<Blog>().select("id", "title", "content");
-                // (title like kw1 or content like kw1) or (title like kw2 or content like kw2) ...
-                boolean first = true;
-                for (String kw : expanded) {
-                    if (StrUtil.isBlank(kw)) continue;
-                    if (first) {
-                        qw.and(w -> w.like("title", kw).or().like("content", kw));
-                        first = false;
-                    } else {
-                        qw.or(w -> w.like("title", kw).or().like("content", kw));
-                    }
-                }
-                qw.last("limit " + Math.max(topK, 10));
-                candidates = blogService.list(qw);
-            }
-        }
-
-        if (CollUtil.isEmpty(candidates)) {
+        List<com.hmdp.dto.RagChunk> hits = vectorRagService.searchTopK(query, topK);
+        if (hits == null || hits.isEmpty()) {
             return Result.ok("未检索到相关内容");
         }
 
-        // 2) 截断、拼接为 RAG 上下文
-        int snippetMax = Optional.ofNullable(aiProperties.getSnippetMaxChars()).orElse(300);
         int contextMax = Optional.ofNullable(aiProperties.getContextMaxChars()).orElse(4000);
         StringBuilder contextBuilder = new StringBuilder();
-        for (Blog b : candidates) {
-            String title = Optional.ofNullable(b.getTitle()).orElse("");
-            String content = Optional.ofNullable(b.getContent()).orElse("");
-            String snippet = StrUtil.sub(content, 0, Math.min(snippetMax, content.length()));
-            String piece = "标题：" + title + "\n内容片段：" + snippet + "\n\n";
-            if (contextBuilder.length() + piece.length() > contextMax) {
-                break;
-            }
+        for (com.hmdp.dto.RagChunk c : hits) {
+            String piece = "标题：" + (c.getTitle()==null?"":c.getTitle()) + "\n内容片段：" + c.getText() + "\n\n";
+            if (contextBuilder.length() + piece.length() > contextMax) break;
             contextBuilder.append(piece);
         }
 
-        String systemPrompt = "你是一个专业的笔记总结助手。基于给定的笔记片段，\n"
-                + "- 用中文输出一个凝练的要点总结（5-10条要点即可），\n"
-                + "- 保持客观中立，不要编造事实，\n"
-                + "- 若信息不足请直说‘信息不足，无法得出可靠结论’。";
-
-        String userPrompt = "用户搜索关键词：" + query + "\n以下为与之相关的笔记片段（可能不完整）：\n\n" + contextBuilder.toString()
-                + "\n请输出精炼总结，适合展示在搜索结果顶部。";
-
+        String systemPrompt = "你是一个专业的笔记总结助手。基于向量检索到的片段，输出中文凝练要点（5-10条），如信息不足则说明。";
+        String userPrompt = "用户搜索关键词：" + query + "\n以下为相关片段：\n\n" + contextBuilder.toString();
         String summary = callChatCompletions(systemPrompt, userPrompt);
         if (StrUtil.isBlank(summary)) {
             return Result.fail("AI 总结失败");
         }
-
-        // 3) 缓存
         long ttl = Optional.ofNullable(aiProperties.getCacheTtlSeconds()).orElse(300L);
-        stringRedisTemplate.opsForValue().set(cacheKey, summary, ttl, TimeUnit.SECONDS);
-
+        stringRedisTemplate.opsForValue().set(cacheKey, summary, ttl, java.util.concurrent.TimeUnit.SECONDS);
         return Result.ok(summary);
     }
-
-    /**
-     * 使用大模型对查询进行关键词扩展，输出 3-8 个相关中文关键词。
-     * 结果做短期缓存，避免重复生成。
-     */
-    private List<String> expandKeywordsWithLLM(String query) {
-        try {
-            String cacheKey = "ai:qexp:" + query.trim();
-            String cached = stringRedisTemplate.opsForValue().get(cacheKey);
-            if (StrUtil.isNotBlank(cached)) {
-                return Arrays.stream(cached.split(","))
-                        .map(String::trim)
-                        .filter(StrUtil::isNotBlank)
-                        .collect(Collectors.toList());
-            }
-
-            String systemPrompt = "你是中文搜索助手。请将用户查询改写为更易检索的关键词。";
-            String userPrompt = "请基于中文查询‘" + query + "’给出3-8个相关检索关键词：\n"
-                    + "- 每个关键词不超过4个字\n"
-                    + "- 只输出逗号分隔的关键词列表，例如：美食, 餐厅, 小吃, 周边\n"
-                    + "- 不要输出解释";
-
-            String raw = callChatCompletions(systemPrompt, userPrompt);
-            if (StrUtil.isBlank(raw)) return Collections.emptyList();
-            // 解析逗号分隔
-            List<String> terms = Arrays.stream(raw.replace('\n', ' ').split("[，,]"))
-                    .map(String::trim)
-                    .filter(StrUtil::isNotBlank)
-                    .distinct()
-                    .limit(10)
-                    .collect(Collectors.toList());
-
-            if (!terms.isEmpty()) {
-                stringRedisTemplate.opsForValue().set(cacheKey, String.join(",", terms),
-                        Optional.ofNullable(aiProperties.getCacheTtlSeconds()).orElse(300L), TimeUnit.SECONDS);
-            }
-            return terms;
-        } catch (Exception e) {
-            log.warn("关键词扩展失败: {}", e.getMessage());
-            return Collections.emptyList();
-        }
-    }
+    // 方案一关键词扩展已删除
 
     private String callChatCompletions(String systemPrompt, String userPrompt) {
         try {

@@ -17,11 +17,11 @@ public class AiSearchController {
     private IAiSearchService aiSearchService;
 
     /**
-     * GET /ai/search?q=关键词
+     * GET /ai/search?q=关键词  向量检索RAG（方案二）
      */
     @GetMapping("/search")
-    public Result search(@RequestParam("q") String q) {
-        return aiSearchService.searchAndSummarize(q);
+    public Result vectorSearch(@RequestParam("q") String q) {
+        return aiSearchService.vectorSearchAndSummarize(q);
     }
 }
 

@@ -4,9 +4,9 @@ import com.hmdp.dto.Result;
 
 public interface IAiSearchService {
     /**
-     * 基于关键词，从 tb_blog 检索 title/content，构造 RAG 上下文并请求大模型，返回中文凝练总结。
+     * 使用向量检索（FAISS思路的本地内存版）进行 RAG 召回，再做总结。
      */
-    Result searchAndSummarize(String query);
+    Result vectorSearchAndSummarize(String query);
 }
 
 

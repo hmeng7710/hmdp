@@ -19,6 +19,21 @@ public class AiProperties {
     private String model;
 
     /**
+     * Embedding 模型名称，例如：text-embedding-3-small
+     */
+    private String embeddingModel;
+
+    /**
+     * Embedding 维度（如 1024）。仅部分模型（v3/v4）支持
+     */
+    private Integer embeddingDimensions;
+
+    /**
+     * Embedding 编码格式，默认 float（OpenAI 兼容/百炼兼容常用）
+     */
+    private String embeddingEncodingFormat = "float";
+
+    /**
      * API Key，形如：sk-***
      */
     private String apiKey;
