@@ -81,6 +81,8 @@ public class PreSummaryServiceImpl implements IPreSummaryService {
         if (keywords == null || keywords.isEmpty()) return Collections.emptySet();
         Set<String> q = keywords.stream().map(String::trim).filter(StrUtil::isNotBlank).collect(Collectors.toSet());
         if (q.isEmpty()) return Collections.emptySet();
+        // 若内存索引为空，则从DB加载一次
+        ensureIndexLoadedFromDb();
         // 简单 OR 匹配：命中任意关键词即入选，按命中数降序，取前 limit
         List<Map.Entry<Long, Set<String>>> list = new ArrayList<>(idToKeywords.entrySet());
         list.sort((a,b)-> Long.compare(matchCount(b.getValue(), q), matchCount(a.getValue(), q)));
@@ -203,6 +205,21 @@ public class PreSummaryServiceImpl implements IPreSummaryService {
             exist.setModel(aiProperties.getModel());
             exist.setUpdatedAt(java.time.LocalDateTime.now());
             preSummaryMapper.updateById(exist);
+        }
+    }
+
+    private void ensureIndexLoadedFromDb() {
+        if (!idToKeywords.isEmpty() && !idToPreview.isEmpty()) return;
+        List<PreSummary> list = preSummaryMapper.selectList(new QueryWrapper<PreSummary>().eq("chunk_id", 0));
+        if (list == null || list.isEmpty()) return;
+        for (PreSummary ps : list) {
+            if (ps.getBlogId() == null) continue;
+            String kw = StrUtil.nullToEmpty(ps.getKeywords());
+            Set<String> set = Arrays.stream(kw.split("[，,]"))
+                    .map(String::trim).filter(StrUtil::isNotBlank)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+            idToKeywords.put(ps.getBlogId(), set);
+            idToPreview.put(ps.getBlogId(), StrUtil.nullToEmpty(ps.getSummary()));
         }
     }
 }
