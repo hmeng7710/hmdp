@@ -22,15 +22,6 @@ public class AiAdminController {
         return Result.ok("incremental rebuild started (async)");
     }
 
-    // 已按需移除单条增量接口
-
-    @GetMapping("/index-stats")
-    public Result indexStats() {
-        java.util.Map<String, Object> data = new java.util.HashMap<>();
-        data.put("previews", preSummaryService.countPreviews());
-        data.put("keywordSets", preSummaryService.countKeywordSets());
-        return Result.ok(data);
-    }
 }
 
 

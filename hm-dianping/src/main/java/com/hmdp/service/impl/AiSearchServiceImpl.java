@@ -4,7 +4,6 @@ import cn.hutool.core.util.StrUtil;
 import com.hmdp.config.AiProperties;
 import com.hmdp.dto.Result;
 import com.hmdp.service.IAiSearchService;
-import com.hmdp.service.IBlogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -23,9 +22,6 @@ import java.util.*;
 @RequiredArgsConstructor
 public class AiSearchServiceImpl implements IAiSearchService {
 
-    // 保留依赖以便后续扩展（当前未使用）
-    @SuppressWarnings("unused")
-    private final IBlogService blogService;
     private final StringRedisTemplate stringRedisTemplate;
     private final AiProperties aiProperties;
 
@@ -53,7 +49,6 @@ public class AiSearchServiceImpl implements IAiSearchService {
         stringRedisTemplate.opsForValue().set(cacheKey, summary, ttl, java.util.concurrent.TimeUnit.SECONDS);
         return Result.ok(summary);
     }
-    // 方案一关键词扩展已删除
 
     private String callChatCompletions(String systemPrompt, String userPrompt) {
         try {
