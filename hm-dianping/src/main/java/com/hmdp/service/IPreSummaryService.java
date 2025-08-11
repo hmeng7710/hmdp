@@ -8,6 +8,7 @@ public interface IPreSummaryService {
     int countKeywordSets();
     Set<Long> searchByKeywords(java.util.List<String> keywords, int limit);
     String getLightContext(Long blogId);
+    void refreshExpired();
 }
 
 

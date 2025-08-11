@@ -5,6 +5,8 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.config.AiProperties;
 import com.hmdp.entity.Blog;
+import com.hmdp.entity.PreSummary;
+import com.hmdp.mapper.PreSummaryMapper;
 import com.hmdp.service.IPreSummaryService;
 import com.hmdp.service.IBlogService;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import javax.annotation.Resource;
+import java.security.MessageDigest;
 import java.net.URI;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,6 +33,8 @@ public class PreSummaryServiceImpl implements IPreSummaryService {
 
     @Resource
     private RestTemplate restTemplate;
+    @Resource
+    private PreSummaryMapper preSummaryMapper;
 
     // 预摘要与关键词的内存存储（简洁实现）
     private final Map<Long, String> idToPreview = new ConcurrentHashMap<>();
@@ -53,15 +58,23 @@ public class PreSummaryServiceImpl implements IPreSummaryService {
             if (StrUtil.isBlank(preview)) preview = StrUtil.sub(input, 0, Math.min(maxLen, input.length()));
             idToPreview.put(b.getId(), StrUtil.sub(preview, 0, maxLen));
             idToKeywords.put(b.getId(), kws);
+            // 持久化到DB（upsert）
+            upsertPreSummary(b.getId(), 0, sha1(raw), StrUtil.sub(preview,0,maxLen), String.join(",",kws));
         }
         log.info("PreSummary built: previews={}, keywords={}", idToPreview.size(), idToKeywords.size());
     }
 
     @Override
-    public int countPreviews() { return idToPreview.size(); }
+    public int countPreviews() {
+        if (!idToPreview.isEmpty()) return idToPreview.size();
+        return preSummaryMapper.selectCount(null).intValue();
+    }
 
     @Override
-    public int countKeywordSets() { return idToKeywords.size(); }
+    public int countKeywordSets() {
+        if (!idToKeywords.isEmpty()) return idToKeywords.size();
+        return preSummaryMapper.selectCount(null).intValue();
+    }
 
     @Override
     public Set<Long> searchByKeywords(List<String> keywords, int limit) {
@@ -76,7 +89,19 @@ public class PreSummaryServiceImpl implements IPreSummaryService {
 
     @Override
     public String getLightContext(Long blogId) {
-        return idToPreview.getOrDefault(blogId, "");
+        String pv = idToPreview.get(blogId);
+        if (pv != null) return pv;
+        PreSummary ps = preSummaryMapper.selectOne(new QueryWrapper<PreSummary>()
+                .eq("blog_id", blogId)
+                .eq("chunk_id", 0)
+                .last("limit 1"));
+        return ps == null ? "" : ps.getSummary();
+    }
+
+    @Override
+    public void refreshExpired() {
+        // 简化：定时被调用时全量重建（可按 expires_at 条件改造为增量）
+        rebuild();
     }
 
     private long matchCount(Set<String> base, Set<String> q) {
@@ -140,6 +165,45 @@ public class PreSummaryServiceImpl implements IPreSummaryService {
     private static Map<String,String> mapOf(String k1,String v1,String k2,String v2){
         Map<String,String> m=new HashMap<>();
         m.put(k1,v1);m.put(k2,v2);return m;
+    }
+
+    // 工具：SHA1
+    private String sha1(String text) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-1");
+            byte[] bytes = md.digest(StrUtil.nullToEmpty(text).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : bytes) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    // 持久化 UPSERT（简化版：用原生SQL或 MP）
+    private void upsertPreSummary(Long blogId, int chunkId, String sourceHash, String summary, String keywords) {
+        PreSummary exist = preSummaryMapper.selectOne(new QueryWrapper<PreSummary>()
+                .eq("blog_id", blogId)
+                .eq("chunk_id", chunkId)
+                .last("limit 1"));
+        if (exist == null) {
+            PreSummary ps = new PreSummary();
+            ps.setBlogId(blogId);
+            ps.setChunkId(chunkId);
+            ps.setSourceHash(sourceHash);
+            ps.setSummary(summary);
+            ps.setKeywords(keywords);
+            ps.setModel(aiProperties.getModel());
+            ps.setUpdatedAt(java.time.LocalDateTime.now());
+            preSummaryMapper.insert(ps);
+        } else {
+            exist.setSourceHash(sourceHash);
+            exist.setSummary(summary);
+            exist.setKeywords(keywords);
+            exist.setModel(aiProperties.getModel());
+            exist.setUpdatedAt(java.time.LocalDateTime.now());
+            preSummaryMapper.updateById(exist);
+        }
     }
 }
 
