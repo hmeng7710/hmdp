@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.web.client.RestTemplate;
 
 import javax.annotation.Resource;
@@ -41,6 +42,7 @@ public class PreSummaryServiceImpl implements IPreSummaryService {
     private final Map<Long, Set<String>> idToKeywords = new ConcurrentHashMap<>();
 
     @Override
+    @Async
     public synchronized void rebuild() {
         idToPreview.clear();
         idToKeywords.clear();
@@ -104,6 +106,34 @@ public class PreSummaryServiceImpl implements IPreSummaryService {
     public void refreshExpired() {
         // 简化：定时被调用时全量重建（可按 expires_at 条件改造为增量）
         rebuild();
+    }
+
+    // 已按需移除单条增量方法
+
+    @Override
+    @Async
+    public void rebuildIncremental() {
+        // 简化版：找出 pre_summary 中不存在的 blog 作为“新增”，只为它们生成
+        List<Blog> all = blogService.list(new QueryWrapper<Blog>().select("id","title","content"));
+        if (all == null || all.isEmpty()) return;
+        Set<Long> existed = preSummaryMapper.selectList(new QueryWrapper<PreSummary>().select("blog_id")).stream()
+                .map(PreSummary::getBlogId).collect(Collectors.toSet());
+        for (Blog b : all) {
+            if (existed.contains(b.getId())) continue;
+            // inline 单条增量逻辑（避免依赖已移除的方法）
+            String title = StrUtil.nullToEmpty(b.getTitle());
+            String content = StrUtil.nullToEmpty(b.getContent()).replaceAll("<[^>]+>", " ")
+                    .replaceAll("\\s+"," ").trim();
+            int maxLen = Optional.ofNullable(aiProperties.getSnippetMaxChars()).orElse(300);
+            String raw = title + "\n" + content;
+            String input = StrUtil.sub(raw, 0, Math.min(maxLen * 3, raw.length()));
+            String preview = genPreview(input);
+            Set<String> kws = extractKeywords(input);
+            if (StrUtil.isBlank(preview)) preview = StrUtil.sub(input, 0, Math.min(maxLen, input.length()));
+            idToPreview.put(b.getId(), StrUtil.sub(preview, 0, maxLen));
+            idToKeywords.put(b.getId(), kws);
+            upsertPreSummary(b.getId(), 0, sha1(raw), StrUtil.sub(preview,0,maxLen), String.join(",",kws));
+        }
     }
 
     private long matchCount(Set<String> base, Set<String> q) {

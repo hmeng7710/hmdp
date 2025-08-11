@@ -17,7 +17,8 @@ public class PreSummaryScheduler {
     @Scheduled(cron = "0 0 3 */7 * ?")
     public void refreshEvery7Days() {
         log.info("[PreSummaryScheduler] start 7-day refresh");
-        preSummaryService.refreshExpired();
+        // 仅处理新增/缺失（过去任意时段新增都会在此被补齐）
+        preSummaryService.rebuildIncremental();
         log.info("[PreSummaryScheduler] finish 7-day refresh");
     }
 }

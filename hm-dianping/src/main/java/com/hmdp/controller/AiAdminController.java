@@ -18,8 +18,17 @@ public class AiAdminController {
     @GetMapping("/rebuild-index")
     public Result rebuildIndex() {
         preSummaryService.rebuild();
-        return Result.ok("pre-summaries rebuilt");
+        return Result.ok("pre-summaries rebuild started (async)");
     }
+
+    // 增量：仅处理DB中的新增（或缺失）
+    @GetMapping("/rebuild-incremental")
+    public Result rebuildIncremental() {
+        preSummaryService.rebuildIncremental();
+        return Result.ok("incremental rebuild started (async)");
+    }
+
+    // 已按需移除单条增量接口
 
     @GetMapping("/index-stats")
     public Result indexStats() {

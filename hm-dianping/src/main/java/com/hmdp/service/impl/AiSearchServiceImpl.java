@@ -28,40 +28,23 @@ public class AiSearchServiceImpl implements IAiSearchService {
     private final IBlogService blogService;
     private final StringRedisTemplate stringRedisTemplate;
     private final AiProperties aiProperties;
-    private final com.hmdp.service.IVectorRagService vectorRagService;
 
     @Resource
     private RestTemplate restTemplate;
-
-    // 删除方案一（like/BM25）逻辑，改为仅保留方案二
 
     @Override
     public Result vectorSearchAndSummarize(String query) {
         if (StrUtil.isBlank(query)) {
             return Result.fail("关键词不能为空");
         }
-        String cacheKey = "ai:vsearch:" + query.trim();
+        // 方案D：外部已拼好轻上下文，这里仅做总结
+        String cacheKey = "ai:sum:" + query.trim();
         String cached = stringRedisTemplate.opsForValue().get(cacheKey);
         if (StrUtil.isNotBlank(cached)) {
             return Result.ok(cached);
         }
-
-        int topK = Optional.ofNullable(aiProperties.getTopK()).orElse(10);
-        List<com.hmdp.dto.RagChunk> hits = vectorRagService.searchTopK(query, topK);
-        if (hits == null || hits.isEmpty()) {
-            return Result.ok("未检索到相关内容");
-        }
-
-        int contextMax = Optional.ofNullable(aiProperties.getContextMaxChars()).orElse(4000);
-        StringBuilder contextBuilder = new StringBuilder();
-        for (com.hmdp.dto.RagChunk c : hits) {
-            String piece = "标题：" + (c.getTitle()==null?"":c.getTitle()) + "\n内容片段：" + c.getText() + "\n\n";
-            if (contextBuilder.length() + piece.length() > contextMax) break;
-            contextBuilder.append(piece);
-        }
-
-        String systemPrompt = "你是一个专业的笔记总结助手。基于向量检索到的片段，输出中文凝练要点（5-10条），如信息不足则说明。";
-        String userPrompt = "用户搜索关键词：" + query + "\n以下为相关片段：\n\n" + contextBuilder.toString();
+        String systemPrompt = "你是一个专业的笔记总结助手。基于给定的轻上下文（为离线预摘要与少量片段），\n- 输出3~8条中文要点，简洁清晰；\n- 不要重复堆砌；\n- 信息不足就直接说明。";
+        String userPrompt = query; // 已包含：用户查询 + ‘以下为离线预摘要：...’
         String summary = callChatCompletions(systemPrompt, userPrompt);
         if (StrUtil.isBlank(summary)) {
             return Result.fail("AI 总结失败");
