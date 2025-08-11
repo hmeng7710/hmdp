@@ -15,12 +15,6 @@ public class AiAdminController {
     @Resource
     private IPreSummaryService preSummaryService;
 
-    @GetMapping("/rebuild-index")
-    public Result rebuildIndex() {
-        preSummaryService.rebuild();
-        return Result.ok("pre-summaries rebuild started (async)");
-    }
-
     // 增量：仅处理DB中的新增（或缺失）
     @GetMapping("/rebuild-incremental")
     public Result rebuildIncremental() {
