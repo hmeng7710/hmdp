@@ -30,9 +30,6 @@ ai:
   # 兼容 OpenAI 的 Chat Completions 接口（百炼内地站）
   base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
   model: qwen-flash
-  embedding-model: text-embedding-v1
-  embedding-dimensions: 1024
-  embedding-encoding-format: float
   api-key: sk-a5dff1f83c314502bd6561924e0e2356
   temperature: 0.2
   max-tokens: 512
