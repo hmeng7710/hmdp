@@ -22,6 +22,7 @@ public class MyConfig implements WebMvcConfigurer {
                 "/blog/log",
                 "shop/**",
                 "shop-type/**",
+                "/ai/**",
                 "/upload/**",
                 "voucher/**"
         ).order(1);
