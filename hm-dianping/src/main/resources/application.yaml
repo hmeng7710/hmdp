@@ -25,3 +25,15 @@ mybatis-plus:
 logging:
   level:
     com.hmdp: debug
+
+ai:
+  # 兼容 OpenAI 的 Chat Completions 接口（百炼内地站）
+  base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: qwen-flash
+  api-key: sk-a5dff1f83c314502bd6561924e0e2356
+  temperature: 0.2
+  max-tokens: 512
+  snippet-max-chars: 300
+  top-k: 10
+  context-max-chars: 4000
+  cache-ttl-seconds: 300
